@@ -1,5 +1,18 @@
 # README - tg-ch18 Linux 兼容测试套件
 
+linux-compatible-tests/ch18_file0.c 能在tg-18中运行了
+
+riscv64-linux-gnu-gcc 编译的静态执行程序
+
+测试
+
+cd linux-compatible-tests
+./run-in-qemu-system.sh
+
+在shell中，执行 ch18_file0
+
+
+
 ## 🎯 概述
 
 这个目录包含了可以在 **tg-ch18 内核**和**Linux (qemu-riscv64)** 中运行的文件操作测试程序。
