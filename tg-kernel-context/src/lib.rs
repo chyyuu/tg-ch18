@@ -179,6 +179,8 @@ fn build_sstatus(supervisor: bool, interrupt: bool) -> usize {
     unsafe { core::arch::asm!("csrr {}, sstatus", out(reg) sstatus) };
     const PREVILEGE_BIT: usize = 1 << 8;
     const INTERRUPT_BIT: usize = 1 << 5;
+    const FS_BITS: usize = 0b11 << 13;  // sstatus.FS[1:0] 在 bit 13-14
+    
     match supervisor {
         false => sstatus &= !PREVILEGE_BIT,
         true => sstatus |= PREVILEGE_BIT,
@@ -187,6 +189,11 @@ fn build_sstatus(supervisor: bool, interrupt: bool) -> usize {
         false => sstatus &= !INTERRUPT_BIT,
         true => sstatus |= INTERRUPT_BIT,
     }
+    
+    // 启用浮点扩展 (设置 FS = Initial 或 Dirty)
+    // FS = 11 (Dirty) 允许浮点指令执行
+    sstatus |= FS_BITS;
+    
     sstatus
 }
 

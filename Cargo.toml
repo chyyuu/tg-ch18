@@ -95,6 +95,15 @@ version = "0.1.0"
 [dependencies.xmas-elf]
 version = "0.8.0"
 
+[dependencies.kernel-elf-parser]
+git = "https://github.com/Starry-OS/kernel_elf_parser.git"
+rev = "fdcce74"
+
+[dependencies.linux-raw-sys]
+version = "0.11"
+default-features = false
+features = ["no_std", "general"]
+
 [build-dependencies.serde]
 version = "1"
 features = ["derive"]

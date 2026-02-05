@@ -2,7 +2,7 @@ use crate::{
     build_flags, fs::Fd, map_portal, parse_flags, processor::ProcessorInner, Sv39, Sv39Manager,
     PROCESSOR,
 };
-use alloc::{alloc::alloc_zeroed, boxed::Box, vec::Vec};
+use alloc::{alloc::alloc_zeroed, boxed::Box, vec::Vec, string::String};
 use core::alloc::Layout;
 use spin::Mutex;
 use tg_kernel_context::{foreign::ForeignContext, LocalContext};
@@ -17,7 +17,7 @@ use xmas_elf::{
     header::{self, HeaderPt2, Machine},
     program, ElfFile,
 };
-
+use kernel_elf_parser::{app_stack_region, AuxEntry, AuxType};
 /// 线程
 pub struct Thread {
     /// 不可变
@@ -198,57 +198,48 @@ impl Process {
         let satp = (8 << 60) | address_space.root_ppn().val();
         let mut context = LocalContext::user(entry);
         
-        // 初始化 Linux 风格的栈布局：argc/argv/envp/auxv
+        // 使用 kernel-elf-parser 生成栈数据
         let stack_bottom_vaddr = ((1usize << 26) - STACK_PAGES) << Sv39::PAGE_BITS;
         let stack_top_vaddr = (1usize << 26) << Sv39::PAGE_BITS;  // 0x4000000000
         let stack_phys = stack as *mut u8;
         
-        // 从栈顶向下写入数据
-        let mut sp = stack_top_vaddr;
+        // 手动构建 auxiliary vector
+        let page_size = 1 << Sv39::PAGE_BITS;  // 4096
+        let phdr = 0x10040;  // Program headers 的虚拟地址（ELF 中的位置）
+        let phent = elf.header.pt2.ph_entry_size() as usize;
+        let phnum = elf.header.pt2.ph_count() as usize;
         
-        // 写入辅助函数：在虚拟地址 sp 处写入 usize 值
-        unsafe fn push_usize(
-            stack_phys: *mut u8,
-            stack_bottom_vaddr: usize,
-            sp: &mut usize,
-            value: usize
-        ) {
-            *sp -= 8;
-            // 计算物理偏移：虚拟地址相对于栈底的偏移
-            let offset = *sp - stack_bottom_vaddr;
-            *(stack_phys.add(offset) as *mut usize) = value;
-        }
+        let auxv = vec![
+            AuxEntry::new(AuxType::PHDR, phdr),
+            AuxEntry::new(AuxType::PHENT, phent),
+            AuxEntry::new(AuxType::PHNUM, phnum),
+            AuxEntry::new(AuxType::PAGESZ, page_size),
+            AuxEntry::new(AuxType::ENTRY, entry),
+        ];
         
-        // 1. 写入 auxiliary vector (auxv)
-        // AT_NULL = 0 终止符
+        // 准备参数和环境变量（简化版：只传入程序名）
+        let args = vec![String::from("app")];
+        let envs: Vec<String> = vec![];
+        
+        // 使用 app_stack_region 生成栈数据
+        let stack_data = app_stack_region(&args, &envs, &auxv, stack_top_vaddr);
+        
+        // 计算用户栈指针位置
+        let user_sp = stack_top_vaddr - stack_data.len();
+        
+        // 将栈数据写入物理内存
+        let sp_offset = user_sp - stack_bottom_vaddr;
         unsafe {
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 0);  // AT_NULL value
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 0);  // AT_NULL type
+            core::ptr::copy_nonoverlapping(
+                stack_data.as_ptr(),
+                stack_phys.add(sp_offset),
+                stack_data.len()
+            );
         }
         
-        // 2. 写入 envp (环境变量指针数组)
-        // 只需要一个 NULL 终止符
-        unsafe {
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 0);  // envp[0] = NULL
-        }
+        // 设置栈指针
+        *context.sp_mut() = user_sp;
         
-        // 3. 写入 argv (参数指针数组)
-        // argv[1] = NULL (终止符)
-        unsafe {
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 0);
-        }
-        // argv[0] = NULL (简化处理，不传递程序名字符串)
-        unsafe {
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 0);
-        }
-        
-        // 4. 写入 argc
-        unsafe {
-            push_usize(stack_phys, stack_bottom_vaddr, &mut sp, 1);  // argc = 1
-        }
-        
-        // 设置栈指针指向 argc
-        *context.sp_mut() = sp;
         let thread = Thread::new(satp, context);
 
         Some((

@@ -18,6 +18,9 @@ pub trait Process: Sync {
     fn exit(&self, caller: Caller, status: usize) -> isize {
         unimplemented!()
     }
+    fn exit_group(&self, caller: Caller, status: usize) -> isize {
+        unimplemented!()
+    }
     fn fork(&self, caller: Caller) -> isize {
         unimplemented!()
     }
@@ -34,6 +37,9 @@ pub trait Process: Sync {
         unimplemented!()
     }
     fn set_robust_list(&self, caller: Caller, head: usize, len: usize) -> isize {
+        unimplemented!()
+    }
+    fn prlimit64(&self, caller: Caller, pid: isize, resource: u32, new_limit: usize, old_limit: usize) -> isize {
         unimplemented!()
     }
 }
@@ -71,10 +77,27 @@ pub trait IO: Sync {
     fn fstat(&self, caller: Caller, fd: usize, st: usize) -> isize {
         unimplemented!()
     }
+    fn readlinkat(&self, caller: Caller, dirfd: i32, path: usize, buf: usize, bufsize: usize) -> isize {
+        unimplemented!()
+    }
+    fn dup(&self, caller: Caller, oldfd: usize) -> isize {
+        unimplemented!()
+    }
+    fn fcntl(&self, caller: Caller, fd: usize, cmd: i32, arg: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait Memory: Sync {
     fn brk(&self, caller: Caller, addr: usize) -> isize {
+        unimplemented!()
+    }
+    
+    fn getrandom(&self, caller: Caller, buf: usize, len: usize, flags: u32) -> isize {
+        unimplemented!()
+    }
+    
+    fn mprotect(&self, caller: Caller, addr: usize, len: usize, prot: i32) -> isize {
         unimplemented!()
     }
     
@@ -199,8 +222,14 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::UNLINKAT => IO.call(id, |io| {
             io.unlinkat(caller, args[0] as _, args[1], args[2] as _)
         }),
+        Id::READLINKAT => IO.call(id, |io| {
+            io.readlinkat(caller, args[0] as _, args[1], args[2], args[3])
+        }),
+        Id::DUP => IO.call(id, |io| io.dup(caller, args[0])),
+        Id::FCNTL => IO.call(id, |io| io.fcntl(caller, args[0], args[1] as _, args[2])),
         Id::FSTAT => IO.call(id, |io| io.fstat(caller, args[0], args[1])),
         Id::EXIT => PROCESS.call(id, |proc| proc.exit(caller, args[0])),
+        Id::EXIT_GROUP => PROCESS.call(id, |proc| proc.exit_group(caller, args[0])),
         Id::CLONE => PROCESS.call(id, |proc| proc.fork(caller)),
         Id::EXECVE => PROCESS.call(id, |proc| proc.exec(caller, args[0], args[1])),
         Id::WAIT4 => PROCESS.call(id, |proc| proc.wait(caller, args[0] as _, args[1])),
@@ -213,6 +242,12 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::SCHED_YIELD => SCHEDULING.call(id, |sched| sched.sched_yield(caller)),
         Id::NANOSLEEP => SCHEDULING.call(id, |sched| sched.nanosleep(caller, args[0], args[1])),
         Id::BRK => MEMORY.call(id, |memory| memory.brk(caller, args[0])),
+        Id::GETRANDOM => MEMORY.call(id, |memory| {
+            memory.getrandom(caller, args[0], args[1], args[2] as _)
+        }),
+        Id::MPROTECT => MEMORY.call(id, |memory| {
+            memory.mprotect(caller, args[0], args[1], args[2] as _)
+        }),
         Id::MUNMAP => MEMORY.call(id, |memory| memory.munmap(caller, args[0], args[1])),
         Id::MMAP => MEMORY.call(id, |memory| {
             let [addr, length, prot, flags, fd, offset] = args;
@@ -226,6 +261,9 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::RT_SIGRETURN => SIGNAL.call(id, |signal| signal.sigreturn(caller)),
         Id::PIPE2 => IO.call(id, |io| io.pipe(caller, args[0])),
         Id::RT_SIGPENDING => SIGNAL.call(id, |signal| signal.rt_sigpending(caller, args[0], args[1])),
+        Id::PRLIMIT64 => PROCESS.call(id, |proc| {
+            proc.prlimit64(caller, args[0] as _, args[1] as _, args[2], args[3])
+        }),
         _ => SyscallResult::Unsupported(id),
     }
 }
