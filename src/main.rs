@@ -476,8 +476,8 @@ mod impls {
             }
         }
 
-        fn open(&self, _caller: Caller, path: usize, flags: usize, _mode: usize) -> isize {
-            log::debug!("sys_open <= path: {:#x}, flags: {:#x}, mode: {:#x}", path, flags, _mode);
+        fn open(&self, _caller: Caller, dirfd: isize, path: usize, flags: usize, _mode: usize) -> isize {
+            log::debug!("sys_openat <= dirfd: {}, path: {:#x}, flags: {:#x}, mode: {:#x}", dirfd, path, flags, _mode);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(path), READABLE) {
                 let mut string = String::new();
