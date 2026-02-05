@@ -659,11 +659,23 @@ mod impls {
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current.pid.get_usize() as isize
         }
+        
+        fn set_robust_list(&self, _caller: Caller, _head: usize, _len: usize) -> isize {
+            // 简化实现：futex robust list 对单线程程序不是必需的
+            // 返回 0 表示成功
+            0
+        }
     }
 
     impl Scheduling for SyscallContext {
         #[inline]
         fn sched_yield(&self, _caller: Caller) -> isize {
+            0
+        }
+        
+        fn nanosleep(&self, _caller: Caller, _req: usize, _rem: usize) -> isize {
+            // 简化实现：不真正睡眠，直接返回 0（成功）
+            // 在真实环境下应该解析 timespec 结构体并让出 CPU
             0
         }
     }
@@ -784,6 +796,11 @@ mod impls {
             } else {
                 -1
             }
+        }
+
+        fn rt_sigpending(&self, _caller: Caller, _set: usize, _sigsetsize: usize) -> isize {
+            // 简化实现：没有待处理的信号
+            0
         }
     }
 

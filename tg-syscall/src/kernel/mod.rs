@@ -33,6 +33,9 @@ pub trait Process: Sync {
     fn set_tid_address(&self, caller: Caller, tidp: usize) -> isize {
         unimplemented!()
     }
+    fn set_robust_list(&self, caller: Caller, head: usize, len: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait IO: Sync {
@@ -97,6 +100,9 @@ pub trait Scheduling: Sync {
     fn sched_yield(&self, caller: Caller) -> isize {
         unimplemented!()
     }
+    fn nanosleep(&self, caller: Caller, req: usize, rem: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait Clock: Sync {
@@ -119,6 +125,10 @@ pub trait Signal: Sync {
     }
 
     fn sigreturn(&self, caller: Caller) -> isize {
+        unimplemented!()
+    }
+
+    fn rt_sigpending(&self, caller: Caller, set: usize, sigsetsize: usize) -> isize {
         unimplemented!()
     }
 }
@@ -196,10 +206,12 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::WAIT4 => PROCESS.call(id, |proc| proc.wait(caller, args[0] as _, args[1])),
         Id::GETPID => PROCESS.call(id, |proc| proc.getpid(caller)),
         Id::SET_TID_ADDRESS => PROCESS.call(id, |proc| proc.set_tid_address(caller, args[0])),
+        Id::SET_ROBUST_LIST => PROCESS.call(id, |proc| proc.set_robust_list(caller, args[0], args[1])),
         Id::CLOCK_GETTIME => CLOCK.call(id, |clock| {
             clock.clock_gettime(caller, ClockId(args[0]), args[1])
         }),
         Id::SCHED_YIELD => SCHEDULING.call(id, |sched| sched.sched_yield(caller)),
+        Id::NANOSLEEP => SCHEDULING.call(id, |sched| sched.nanosleep(caller, args[0], args[1])),
         Id::BRK => MEMORY.call(id, |memory| memory.brk(caller, args[0])),
         Id::MUNMAP => MEMORY.call(id, |memory| memory.munmap(caller, args[0], args[1])),
         Id::MMAP => MEMORY.call(id, |memory| {
@@ -213,6 +225,7 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::RT_SIGPROCMASK => SIGNAL.call(id, |signal| signal.sigprocmask(caller, args[0])),
         Id::RT_SIGRETURN => SIGNAL.call(id, |signal| signal.sigreturn(caller)),
         Id::PIPE2 => IO.call(id, |io| io.pipe(caller, args[0])),
+        Id::RT_SIGPENDING => SIGNAL.call(id, |signal| signal.rt_sigpending(caller, args[0], args[1])),
         _ => SyscallResult::Unsupported(id),
     }
 }
