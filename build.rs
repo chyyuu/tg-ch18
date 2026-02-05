@@ -117,6 +117,14 @@ fn build_apps_and_pack_fs() {
 }
 
 fn build_user_app(tg_user_root: &PathBuf, name: &str, base_address: u64) {
+    // 如果在仓库的 linux-user 目录下存在同名可执行文件，则跳过对 tg-user 的 cargo 构建。
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let linux_user_bin = manifest_dir.join("linux-user").join(name);
+    if linux_user_bin.exists() {
+        println!("cargo:warning=skip building {name}, using {linux_user_bin:?}");
+        return;
+    }
+
     let mut cmd = Command::new("cargo");
     cmd.args([
         "build",
@@ -183,8 +191,20 @@ fn easy_fs_pack(
     let efs = EasyFileSystem::create(block_file, 64 * 2048, 1);
     let root_inode = Arc::new(EasyFileSystem::root_inode(&efs));
 
+    let manifest_dir = PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").unwrap());
     for case in cases {
-        let mut host_file = std::fs::File::open(app_target.join(case)).unwrap();
+        let candidate_app = app_target.join(case);
+        let host_path = if candidate_app.exists() {
+            candidate_app
+        } else {
+            let alt = manifest_dir.join("linux-user").join(case);
+            if alt.exists() {
+                alt
+            } else {
+                panic!("cannot find app file for {} in {} or {}", case, candidate_app.display(), alt.display());
+            }
+        };
+        let mut host_file = std::fs::File::open(host_path).unwrap();
         let mut all_data: Vec<u8> = Vec::new();
         host_file.read_to_end(&mut all_data).unwrap();
         let inode = root_inode.create(case.as_str()).unwrap();
