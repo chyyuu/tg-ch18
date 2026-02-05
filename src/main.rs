@@ -412,6 +412,7 @@ mod impls {
 
     impl IO for SyscallContext {
         fn write(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+            log::debug!("sys_write <= fd: {}, buf: {:#x}, count: {}", fd, buf, count);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(buf), READABLE) {
                 if fd == STDOUT || fd == STDDEBUG {
@@ -443,6 +444,7 @@ mod impls {
         }
 
         fn read(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
+            log::debug!("sys_read <= fd: {}, buf: {:#x}, count: {}", fd, buf, count);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(buf), WRITEABLE) {
                 if fd == STDIN {
@@ -475,6 +477,7 @@ mod impls {
         }
 
         fn open(&self, _caller: Caller, path: usize, flags: usize, _mode: usize) -> isize {
+            log::debug!("sys_open <= path: {:#x}, flags: {:#x}, mode: {:#x}", path, flags, _mode);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(path), READABLE) {
                 let mut string = String::new();
@@ -511,6 +514,7 @@ mod impls {
         }
 
         fn fstat(&self, _caller: Caller, fd: usize, st: usize) -> isize {
+            log::debug!("sys_fstat <= fd: {}, st: {:#x}", fd, st);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
                 return -1;
@@ -553,6 +557,7 @@ mod impls {
 
         #[inline]
         fn close(&self, _caller: Caller, fd: usize) -> isize {
+            log::debug!("sys_close <= fd: {}", fd);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
                 return -1;
@@ -562,6 +567,7 @@ mod impls {
         }
 
         fn pipe(&self, _caller: Caller, pipe: usize) -> isize {
+            log::debug!("sys_pipe <= pipe: {:#x}", pipe);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             let (read_end, write_end) = make_pipe();
             let read_fd = current.fd_table.len();
@@ -595,6 +601,7 @@ mod impls {
         }
         
         fn readlinkat(&self, _caller: Caller, _dirfd: i32, path: usize, buf: usize, bufsize: usize) -> isize {
+            log::debug!("sys_readlinkat <= dirfd: {}, path: {:#x}, buf: {:#x}, bufsize: {}", _dirfd, path, buf, bufsize);
             // 简化实现：不支持符号链接，返回 EINVAL
             // 完整实现需要：
             // 1. 解析 path 字符串
@@ -605,6 +612,7 @@ mod impls {
         }
         
         fn dup(&self, _caller: Caller, oldfd: usize) -> isize {
+            log::debug!("sys_dup <= oldfd: {}", oldfd);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             
             // 检查 oldfd 是否有效
@@ -626,6 +634,7 @@ mod impls {
         }
         
         fn fcntl(&self, _caller: Caller, fd: usize, cmd: i32, _arg: usize) -> isize {
+            log::debug!("sys_fcntl <= fd: {}, cmd: {}, arg: {}", fd, cmd, _arg);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             
             // 检查文件描述符是否有效
@@ -681,15 +690,18 @@ mod impls {
     impl Process for SyscallContext {
         #[inline]
         fn exit(&self, _caller: Caller, exit_code: usize) -> isize {
+            log::debug!("sys_exit <= exit_code: {}", exit_code);
             exit_code as isize
         }
 
         fn exit_group(&self, _caller: Caller, exit_code: usize) -> isize {
+            log::debug!("sys_exit_group <= exit_code: {}", exit_code);
             // exit_group 与 exit 有相同的行为：退出整个进程
             exit_code as isize
         }
 
         fn fork(&self, _caller: Caller) -> isize {
+            log::debug!("sys_fork <=");
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
             let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
             let parent_pid = current_proc.pid; // 先保存父进程 pid
@@ -704,6 +716,7 @@ mod impls {
         }
 
         fn exec(&self, _caller: Caller, path: usize, count: usize) -> isize {
+            log::debug!("sys_exec <= path: {:#x}, count: {}", path, count);
             const READABLE: VmFlags<Sv39> = build_flags("RV");
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current
@@ -731,6 +744,7 @@ mod impls {
         }
 
         fn wait(&self, _caller: Caller, pid: isize, exit_code_ptr: usize) -> isize {
+            log::debug!("sys_wait <= pid: {}, exit_code_ptr: {:#x}", pid, exit_code_ptr);
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
             let current = unsafe { (*processor).get_current_proc().unwrap() };
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
@@ -751,23 +765,27 @@ mod impls {
         }
 
         fn getpid(&self, _caller: Caller) -> isize {
+            log::debug!("sys_getpid <=");
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current.pid.get_usize() as _
         }
         
         fn set_tid_address(&self, _caller: Caller, _tidp: usize) -> isize {
+            log::debug!("sys_set_tid_address <= tidp: {:#x}", _tidp);
             // 简化实现：只是返回 PID，不实际使用 _tidp
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current.pid.get_usize() as isize
         }
         
         fn set_robust_list(&self, _caller: Caller, _head: usize, _len: usize) -> isize {
+            log::debug!("sys_set_robust_list <= head: {:#x}, len: {}", _head, _len);
             // 简化实现：futex robust list 对单线程程序不是必需的
             // 返回 0 表示成功
             0
         }
         
         fn prlimit64(&self, _caller: Caller, _pid: isize, resource: u32, new_limit: usize, old_limit: usize) -> isize {
+            log::debug!("sys_prlimit64 <= pid: {}, resource: {}, new_limit: {:#x}, old_limit: {:#x}", _pid, resource, new_limit, old_limit);
             use linux_raw_sys::general::{RLIM_NLIMITS, rlimit64};
             
             // 检查资源类型是否有效
@@ -803,10 +821,12 @@ mod impls {
     impl Scheduling for SyscallContext {
         #[inline]
         fn sched_yield(&self, _caller: Caller) -> isize {
+            log::debug!("sys_sched_yield <=");
             0
         }
         
         fn nanosleep(&self, _caller: Caller, _req: usize, _rem: usize) -> isize {
+            log::debug!("sys_nanosleep <= req: {:#x}, rem: {:#x}", _req, _rem);
             // 简化实现：不真正睡眠，直接返回 0（成功）
             // 在真实环境下应该解析 timespec 结构体并让出 CPU
             0
@@ -816,6 +836,7 @@ mod impls {
     impl Clock for SyscallContext {
         #[inline]
         fn clock_gettime(&self, _caller: Caller, clock_id: ClockId, tp: usize) -> isize {
+            log::debug!("sys_clock_gettime <= clock_id: {:?}, tp: {:#x}", clock_id, tp);
             const WRITABLE: VmFlags<Sv39> = build_flags("W_V");
             match clock_id {
                 ClockId::CLOCK_MONOTONIC => {
@@ -844,6 +865,7 @@ mod impls {
 
     impl Signal for SyscallContext {
         fn kill(&self, _caller: Caller, pid: isize, signum: u8) -> isize {
+            log::debug!("sys_kill <= pid: {}, signum: {}", pid, signum);
             if let Some(target_task) = PROCESSOR
                 .get_mut()
                 .get_proc(ProcId::from_usize(pid as usize))
@@ -865,6 +887,7 @@ mod impls {
             action: usize,
             old_action: usize,
         ) -> isize {
+            log::debug!("sys_sigaction <= signum: {}, action: {:#x}, old_action: {:#x}", signum, action, old_action);
             if signum as usize > tg_signal::MAX_SIG {
                 return -1;
             }
@@ -912,11 +935,13 @@ mod impls {
         }
 
         fn sigprocmask(&self, _caller: Caller, mask: usize) -> isize {
+            log::debug!("sys_sigprocmask <= mask: {:#x}", mask);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current.signal.update_mask(mask) as isize
         }
 
         fn sigreturn(&self, _caller: Caller) -> isize {
+            log::debug!("sys_sigreturn <=");
             let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
             let current = unsafe { (*processor).get_current_proc().unwrap() };
             let current_thread = unsafe { (*processor).current().unwrap() };
@@ -932,6 +957,7 @@ mod impls {
         }
 
         fn rt_sigpending(&self, _caller: Caller, _set: usize, _sigsetsize: usize) -> isize {
+            log::debug!("sys_rt_sigpending <= set: {:#x}, sigsetsize: {}", _set, _sigsetsize);
             // 简化实现：没有待处理的信号
             0
         }
@@ -939,6 +965,7 @@ mod impls {
 
     impl Memory for SyscallContext {
         fn brk(&self, _caller: Caller, addr: usize) -> isize {
+            log::debug!("sys_brk <= addr: {:#x}", addr);
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             
             log::info!("brk called: addr={:#x}, current heap_start={:#x}, heap_end={:#x}", 
@@ -999,6 +1026,7 @@ mod impls {
         }
         
         fn getrandom(&self, _caller: Caller, buf: usize, len: usize, _flags: u32) -> isize {
+            log::debug!("sys_getrandom <= buf: {:#x}, len: {}, flags: {:#x}", buf, len, _flags);
             // 简化实现：填充伪随机数
             // 完整实现应该使用真随机数生成器（如 /dev/urandom）
             if len == 0 {
@@ -1033,6 +1061,7 @@ mod impls {
         }
         
         fn mprotect(&self, _caller: Caller, addr: usize, len: usize, prot: i32) -> isize {
+            log::debug!("sys_mprotect <= addr: {:#x}, len: {:#x}, prot: {}", addr, len, prot);
             // 简化实现：只检查参数有效性，不实际修改页表属性
             // 完整实现需要修改页表条目的权限位
             
@@ -1065,11 +1094,14 @@ mod impls {
             _fd: i32,
             _offset: usize,
         ) -> isize {
+            log::debug!("sys_mmap <= addr: {:#x}, length: {:#x}, prot: {}, flags: {}, fd: {}, offset: {:#x}", 
+                       _addr, _length, _prot, _flags, _fd, _offset);
             // 暂不实现，返回错误
             -1
         }
 
         fn munmap(&self, _caller: Caller, _addr: usize, _length: usize) -> isize {
+            log::debug!("sys_munmap <= addr: {:#x}, length: {:#x}", _addr, _length);
             // 暂不实现，返回错误
             -1
         }
