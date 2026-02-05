@@ -81,9 +81,6 @@ version = "0.1.0-preview.1"
 [dependencies.tg-signal-impl]
 version = "0.1.0-preview.1"
 
-[dependencies.tg-sync]
-version = "0.1.0-preview.1"
-
 [dependencies.tg-syscall]
 version = "0.1.0-preview.2"
 features = ["kernel"]
@@ -116,3 +113,17 @@ panic = "abort"
 
 [profile.release]
 panic = "abort"
+
+[patch.crates-io]
+tg-console = { path = "tg-console" }
+tg-easy-fs = { path = "tg-easy-fs" }
+tg-kernel-alloc = { path = "tg-kernel-alloc" }
+tg-kernel-context = { path = "tg-kernel-context" }
+tg-kernel-vm = { path = "tg-kernel-vm" }
+tg-linker = { path = "tg-linker" }
+tg-sbi = { path = "tg-sbi" }
+tg-signal = { path = "tg-signal" }
+tg-signal-impl = { path = "tg-signal-impl" }
+tg-sync = { path = "tg-sync" }
+tg-syscall = { path = "tg-syscall" }
+tg-task-manage = { path = "tg-task-manage" }

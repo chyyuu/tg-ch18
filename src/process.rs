@@ -2,7 +2,7 @@ use crate::{
     build_flags, fs::Fd, map_portal, parse_flags, processor::ProcessorInner, Sv39, Sv39Manager,
     PROCESSOR,
 };
-use alloc::{alloc::alloc_zeroed, boxed::Box, sync::Arc, vec::Vec};
+use alloc::{alloc::alloc_zeroed, boxed::Box, vec::Vec};
 use core::alloc::Layout;
 use spin::Mutex;
 use tg_kernel_context::{foreign::ForeignContext, LocalContext};
@@ -12,7 +12,6 @@ use tg_kernel_vm::{
 };
 use tg_signal::Signal;
 use tg_signal_impl::SignalImpl;
-use tg_sync::{Condvar, Mutex as MutexTrait, Semaphore};
 use tg_task_manage::{ProcId, ThreadId};
 use xmas_elf::{
     header::{self, HeaderPt2, Machine},
@@ -46,10 +45,6 @@ pub struct Process {
     pub fd_table: Vec<Option<Mutex<Fd>>>,
     /// 信号模块
     pub signal: Box<dyn Signal>,
-    /// 分配的锁以及信号量
-    pub semaphore_list: Vec<Option<Arc<Semaphore>>>,
-    pub mutex_list: Vec<Option<Arc<dyn MutexTrait>>>,
-    pub condvar_list: Vec<Option<Arc<Condvar>>>,
 }
 
 impl Process {
@@ -97,9 +92,6 @@ impl Process {
                 address_space,
                 fd_table: new_fd_table,
                 signal: self.signal.from_fork(),
-                semaphore_list: Vec::new(),
-                mutex_list: Vec::new(),
-                condvar_list: Vec::new(),
             },
             thread,
         ))
@@ -189,9 +181,6 @@ impl Process {
                     })),
                 ],
                 signal: Box::new(SignalImpl::new()),
-                semaphore_list: Vec::new(),
-                mutex_list: Vec::new(),
-                condvar_list: Vec::new(),
             },
             thread,
         ))

@@ -20,7 +20,7 @@ extern crate alloc;
 use crate::{
     fs::{read_all, FS},
     impls::{Sv39Manager, SyscallContext},
-    process::{Process, Thread},
+    process::Process,
     processor::{ProcManager, ProcessorInner, ThreadManager},
 };
 use alloc::alloc::alloc;
@@ -123,8 +123,6 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_scheduling(&SyscallContext);
     tg_syscall::init_clock(&SyscallContext);
     tg_syscall::init_signal(&SyscallContext);
-    tg_syscall::init_thread(&SyscallContext);
-    tg_syscall::init_sync_mutex(&SyscallContext);
     let initproc = read_all(FS.open("initproc", OpenFlags::RDONLY).unwrap());
     if let Some((process, thread)) = Process::from_elf(ElfFile::new(initproc.as_slice()).unwrap()) {
         PROCESSOR.get_mut().set_proc_manager(ProcManager::new());
@@ -163,15 +161,6 @@ extern "C" fn rust_main() -> ! {
                         _ => match syscall_ret {
                             Ret::Done(ret) => match id {
                                 Id::EXIT => unsafe { (*processor).make_current_exited(ret) },
-                                Id::SEMAPHORE_DOWN | Id::MUTEX_LOCK | Id::CONDVAR_WAIT => {
-                                    let ctx = &mut task.context.context;
-                                    *ctx.a_mut(0) = ret as _;
-                                    if ret == -1 {
-                                        unsafe { (*processor).make_current_blocked() };
-                                    } else {
-                                        unsafe { (*processor).make_current_suspend() };
-                                    }
-                                }
                                 _ => {
                                     let ctx = &mut task.context.context;
                                     *ctx.a_mut(0) = ret as _;
@@ -270,22 +259,20 @@ mod impls {
         build_flags,
         fs::{read_all, Fd, FS},
         processor::ProcessorInner,
-        Sv39, Thread, PROCESSOR,
+        Sv39, PROCESSOR,
     };
-    use alloc::sync::Arc;
     use alloc::{alloc::alloc_zeroed, string::String, vec::Vec};
     use core::{alloc::Layout, ptr::NonNull};
     use spin::Mutex;
     use tg_console::log;
     use tg_easy_fs::{make_pipe, FSManager, OpenFlags, UserBuffer};
     use tg_kernel_vm::{
-        page_table::{MmuMeta, Pte, VAddr, VmFlags, VmMeta, PPN, VPN},
+        page_table::{MmuMeta, Pte, VAddr, VmFlags, PPN, VPN},
         PageManager,
     };
     use tg_signal::SignalNo;
-    use tg_sync::{Condvar, Mutex as MutexTrait, MutexBlocking, Semaphore};
     use tg_syscall::*;
-    use tg_task_manage::{ProcId, ThreadId};
+    use tg_task_manage::ProcId;
     use xmas_elf::ElfFile;
 
     #[repr(transparent)]
@@ -706,222 +693,6 @@ mod impls {
         }
     }
 
-    impl tg_syscall::Thread for SyscallContext {
-        fn thread_create(&self, _caller: Caller, entry: usize, arg: usize) -> isize {
-            // 主要的问题是用户栈怎么分配，这里不增加其他的数据结构，直接从规定的栈顶的位置从下搜索是否被映射
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            // 第一个线程的用户栈栈底
-            let mut vpn = VPN::<Sv39>::new((1 << 26) - 2);
-            let addrspace = &mut current_proc.address_space;
-            loop {
-                let idx = vpn.index_in(Sv39::MAX_LEVEL);
-                if !addrspace.root()[idx].is_valid() {
-                    break;
-                }
-                vpn = VPN::<Sv39>::new(vpn.val() - 3);
-            }
-            let stack = unsafe {
-                alloc_zeroed(Layout::from_size_align_unchecked(
-                    2 << Sv39::PAGE_BITS,
-                    1 << Sv39::PAGE_BITS,
-                ))
-            };
-            addrspace.map_extern(
-                vpn..vpn + 2,
-                PPN::new(stack as usize >> Sv39::PAGE_BITS),
-                build_flags("U_WRV"),
-            );
-            let satp = (8 << 60) | addrspace.root_ppn().val();
-            let mut context = tg_kernel_context::LocalContext::user(entry);
-            *context.sp_mut() = (vpn + 2).base().val();
-            *context.a_mut(0) = arg;
-            let thread = Thread::new(satp, context);
-            let tid = thread.tid;
-            unsafe {
-                (*processor).add(tid, thread, current_proc.pid);
-            }
-            tid.get_usize() as _
-        }
-
-        fn gettid(&self, _caller: Caller) -> isize {
-            let current_thread = PROCESSOR.get_mut().current().unwrap();
-            current_thread.tid.get_usize() as _
-        }
-
-        fn waittid(&self, _caller: Caller, tid: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current_thread = unsafe { (*processor).current().unwrap() };
-            // 线程不能自己等待自己
-            if tid == current_thread.tid.get_usize() {
-                return -1;
-            }
-            // 在当前的进程中查找 tid 对应的线程
-            if let Some(exit_code) = unsafe { (*processor).waittid(ThreadId::from_usize(tid)) } {
-                exit_code
-            } else {
-                -1
-            }
-        }
-    }
-
-    impl SyncMutex for SyscallContext {
-        fn semaphore_create(&self, _caller: Caller, res_count: usize) -> isize {
-            let current_proc = PROCESSOR.get_mut().get_current_proc().unwrap();
-            let id = if let Some(id) = current_proc
-                .semaphore_list
-                .iter()
-                .enumerate()
-                .find(|(_, item)| item.is_none())
-                .map(|(id, _)| id)
-            {
-                current_proc.semaphore_list[id] = Some(Arc::new(Semaphore::new(res_count)));
-                id
-            } else {
-                current_proc
-                    .semaphore_list
-                    .push(Some(Arc::new(Semaphore::new(res_count))));
-                current_proc.semaphore_list.len() - 1
-            };
-            id as isize
-        }
-
-        fn semaphore_up(&self, _caller: Caller, sem_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let sem = Arc::clone(current_proc.semaphore_list[sem_id].as_ref().unwrap());
-            if let Some(tid) = sem.up() {
-                // 释放锁之后，唤醒某个阻塞在此信号量上的线程
-                unsafe {
-                    (*processor).re_enque(tid);
-                }
-            }
-            0
-        }
-
-        fn semaphore_down(&self, _caller: Caller, sem_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current = unsafe { (*processor).current().unwrap() };
-            let tid = current.tid;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let sem = Arc::clone(current_proc.semaphore_list[sem_id].as_ref().unwrap());
-            if !sem.down(tid) {
-                -1
-            } else {
-                0
-            }
-        }
-        // 虽然提供了标志位来创建不同的锁，但是目前是不支持自旋锁的
-        fn mutex_create(&self, _caller: Caller, blocking: bool) -> isize {
-            let new_mutex: Option<Arc<dyn MutexTrait>> = if blocking {
-                Some(Arc::new(MutexBlocking::new()))
-            } else {
-                // 本来应该是自旋锁，但是目前还不支持，所以先返回 None
-                None
-            };
-            let current_proc = PROCESSOR.get_mut().get_current_proc().unwrap();
-            if let Some(id) = current_proc
-                .mutex_list
-                .iter()
-                .enumerate()
-                .find(|(_, item)| item.is_none())
-                .map(|(id, _)| id)
-            {
-                current_proc.mutex_list[id] = new_mutex;
-                id as isize
-            } else {
-                current_proc.mutex_list.push(new_mutex);
-                current_proc.mutex_list.len() as isize - 1
-            }
-        }
-
-        fn mutex_unlock(&self, _caller: Caller, mutex_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let mutex = Arc::clone(current_proc.mutex_list[mutex_id].as_ref().unwrap());
-            if let Some(tid) = mutex.unlock() {
-                // 释放锁之后，唤醒某个阻塞在此信号量上的线程
-                unsafe {
-                    (*processor).re_enque(tid);
-                }
-            }
-            0
-        }
-
-        fn mutex_lock(&self, _caller: Caller, mutex_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current = unsafe { (*processor).current().unwrap() };
-            let tid = current.tid;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let mutex = Arc::clone(current_proc.mutex_list[mutex_id].as_ref().unwrap());
-            if !mutex.lock(tid) {
-                -1
-            } else {
-                0
-            }
-        }
-
-        fn condvar_create(&self, _caller: Caller, _arg: usize) -> isize {
-            let current_proc = PROCESSOR.get_mut().get_current_proc().unwrap();
-            let id = if let Some(id) = current_proc
-                .condvar_list
-                .iter()
-                .enumerate()
-                .find(|(_, item)| item.is_none())
-                .map(|(id, _)| id)
-            {
-                current_proc.condvar_list[id] = Some(Arc::new(Condvar::new()));
-                id
-            } else {
-                current_proc
-                    .condvar_list
-                    .push(Some(Arc::new(Condvar::new())));
-                current_proc.condvar_list.len() - 1
-            };
-            id as isize
-        }
-
-        fn condvar_signal(&self, _caller: Caller, condvar_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let condvar = Arc::clone(current_proc.condvar_list[condvar_id].as_ref().unwrap());
-            if let Some(tid) = condvar.signal() {
-                // 释放锁之后，唤醒某个阻塞在此信号量上的线程
-                unsafe {
-                    (*processor).re_enque(tid);
-                }
-            }
-            0
-        }
-
-        fn condvar_wait(&self, _caller: Caller, condvar_id: usize, mutex_id: usize) -> isize {
-            let processor: *mut ProcessorInner = PROCESSOR.get_mut() as *mut ProcessorInner;
-            let current = unsafe { (*processor).current().unwrap() };
-            let tid = current.tid;
-            let current_proc = unsafe { (*processor).get_current_proc().unwrap() };
-            let condvar = Arc::clone(current_proc.condvar_list[condvar_id].as_ref().unwrap());
-            let mutex = Arc::clone(current_proc.mutex_list[mutex_id].as_ref().unwrap());
-            let (flag, waking_tid) = condvar.wait_with_mutex(tid, mutex);
-            if let Some(waking_tid) = waking_tid {
-                unsafe {
-                    (*processor).re_enque(waking_tid);
-                }
-            }
-            if !flag {
-                -1
-            } else {
-                0
-            }
-        }
-
-        // TODO: 实现 enable_deadlock_detect 系统调用
-        fn enable_deadlock_detect(&self, _caller: Caller, is_enable: i32) -> isize {
-            tg_console::log::info!(
-                "enable_deadlock_detect: is_enable = {is_enable}, not implemented"
-            );
-            -1
-        }
-    }
 }
 
 /// 非 RISC-V64 架构的占位实现
