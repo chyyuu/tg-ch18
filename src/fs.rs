@@ -54,6 +54,12 @@ impl FSManager for FileSystem {
     }
 }
 
+impl FileSystem {
+    pub fn count_links(&self, inode_id: u32) -> u32 {
+        self.root.count_links(inode_id)
+    }
+}
+
 pub fn read_all(fd: Arc<FileHandle>) -> Vec<u8> {
     let mut offset = 0usize;
     let mut buffer = [0u8; 512];

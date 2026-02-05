@@ -1,40 +1,38 @@
-use bitflags::bitflags;
+/// 文件类型/权限标志（与 Linux 约定保持一致）。
+pub struct StatMode;
 
-bitflags! {
-    /// 文件类型标志
-    pub struct StatMode: u32 {
-        const NULL  = 0;
-        /// directory
-        const DIR   = 0o040000;
-        /// ordinary regular file
-        const FILE  = 0o100000;
-    }
+impl StatMode {
+    /// file type mask
+    pub const S_IFMT: u32 = 0o170000;
+    /// regular file
+    pub const S_IFREG: u32 = 0o100000;
+    /// directory
+    pub const S_IFDIR: u32 = 0o040000;
+    /// default file permissions (rw-r--r--)
+    pub const DEFAULT_FILE_PERM: u32 = 0o644;
+    /// default directory permissions (rwxr-xr-x)
+    pub const DEFAULT_DIR_PERM: u32 = 0o755;
 }
 
-/// 文件状态信息
+/// 文件状态信息（最小 Linux 兼容子集）。
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct Stat {
-    /// 文件所在磁盘驱动器号
-    pub dev: u64,
-    /// inode 编号
-    pub ino: u64,
-    /// 文件类型
-    pub mode: StatMode,
-    /// 硬链接数量
-    pub nlink: u32,
-    /// 填充字段
-    pad: [u64; 7],
+    pub st_dev: u64,
+    pub st_ino: u64,
+    pub st_mode: u32,
+    pub st_nlink: u32,
+    pub st_size: i64,
 }
 
 impl Stat {
     pub fn new() -> Self {
         Self {
-            dev: 0,
-            ino: 0,
-            mode: StatMode::NULL,
-            nlink: 0,
-            pad: [0; 7],
+            st_dev: 0,
+            st_ino: 0,
+            st_mode: 0,
+            st_nlink: 0,
+            st_size: 0,
         }
     }
 }

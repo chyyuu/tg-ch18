@@ -55,6 +55,7 @@
 #define __NR_fchmodat 53
 #define __NR_fchownat 54
 #define __NR_fchown 55
+#define __NR_open 56
 #define __NR_openat 56
 #define __NR_close 57
 #define __NR_vhangup 58

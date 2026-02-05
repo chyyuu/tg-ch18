@@ -21,22 +21,24 @@ pub fn read(fd: usize, buffer: &[u8]) -> isize {
 bitflags! {
     pub struct OpenFlags: u32 {
         const RDONLY = 0;
-        const WRONLY = 1 << 0;
-        const RDWR = 1 << 1;
-        const CREATE = 1 << 9;
-        const TRUNC = 1 << 10;
+        const WRONLY = 1;
+        const RDWR = 2;
+        const CREAT = 0x40;
+        const TRUNC = 0x200;
+        const APPEND = 0x400;
     }
 }
 
 /// 打开文件。
 #[inline]
-pub fn open(path: &str, flags: OpenFlags) -> isize {
+pub fn open(path: &str, flags: OpenFlags, mode: u32) -> isize {
     // SAFETY: path 是有效的字符串引用
     unsafe {
-        syscall2(
-            SyscallId::OPENAT,
+        syscall3(
+            SyscallId::OPEN,
             path.as_ptr() as usize,
             flags.bits as usize,
+            mode as usize,
         )
     }
 }

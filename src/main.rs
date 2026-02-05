@@ -352,6 +352,29 @@ mod impls {
     const READABLE: VmFlags<Sv39> = build_flags("RV");
     const WRITEABLE: VmFlags<Sv39> = build_flags("W_V");
 
+    fn linux_open_flags(flags: u32) -> Option<OpenFlags> {
+        const O_ACCMODE: u32 = 0b11;
+        const O_WRONLY: u32 = 1;
+        const O_RDWR: u32 = 2;
+        const O_CREAT: u32 = 0x40;
+        const O_TRUNC: u32 = 0x200;
+
+        let mut out = OpenFlags::empty();
+        match flags & O_ACCMODE {
+            0 => out |= OpenFlags::RDONLY,
+            O_WRONLY => out |= OpenFlags::WRONLY,
+            O_RDWR => out |= OpenFlags::RDWR,
+            _ => return None,
+        }
+        if flags & O_CREAT != 0 {
+            out |= OpenFlags::CREATE;
+        }
+        if flags & O_TRUNC != 0 {
+            out |= OpenFlags::TRUNC;
+        }
+        Some(out)
+    }
+
     impl IO for SyscallContext {
         fn write(&self, _caller: Caller, fd: usize, buf: usize, count: usize) -> isize {
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
@@ -416,7 +439,7 @@ mod impls {
             }
         }
 
-        fn open(&self, _caller: Caller, path: usize, flags: usize) -> isize {
+        fn open(&self, _caller: Caller, path: usize, flags: usize, _mode: usize) -> isize {
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             if let Some(ptr) = current.address_space.translate(VAddr::new(path), READABLE) {
                 let mut string = String::new();
@@ -432,9 +455,11 @@ mod impls {
                     }
                 }
 
-                if let Some(file_handle) =
-                    FS.open(string.as_str(), OpenFlags::from_bits(flags as u32).unwrap())
-                {
+                let flags = match linux_open_flags(flags as u32) {
+                    Some(flags) => flags,
+                    None => return -1,
+                };
+                if let Some(file_handle) = FS.open(string.as_str(), flags) {
                     let new_fd = current.fd_table.len();
                     // Arc<FileHandle> -> FileHandle，需要解引用
                     current
@@ -443,6 +468,47 @@ mod impls {
                     new_fd as isize
                 } else {
                     -1
+                }
+            } else {
+                log::error!("ptr not writeable");
+                -1
+            }
+        }
+
+        fn fstat(&self, _caller: Caller, fd: usize, st: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            if fd >= current.fd_table.len() || current.fd_table[fd].is_none() {
+                return -1;
+            }
+            if let Some(mut ptr) = current
+                .address_space
+                .translate::<Stat>(VAddr::new(st), WRITEABLE)
+            {
+                let stat = unsafe { ptr.as_mut() };
+                let file = current.fd_table[fd].as_ref().unwrap().lock();
+                match &*file {
+                    Fd::File(f) => {
+                        if let Some(inode) = &f.inode {
+                            let inode_id = inode.inode_id();
+                            let is_dir = inode.is_dir();
+                            let mode = if is_dir {
+                                StatMode::S_IFDIR | StatMode::DEFAULT_DIR_PERM
+                            } else {
+                                StatMode::S_IFREG | StatMode::DEFAULT_FILE_PERM
+                            };
+                            *stat = Stat {
+                                st_dev: 0,
+                                st_ino: inode_id as u64,
+                                st_mode: mode,
+                                st_nlink: FS.count_links(inode_id),
+                                st_size: inode.size() as i64,
+                            };
+                            0
+                        } else {
+                            -1
+                        }
+                    }
+                    _ => -1,
                 }
             } else {
                 log::error!("ptr not writeable");
