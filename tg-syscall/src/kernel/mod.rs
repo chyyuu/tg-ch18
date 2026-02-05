@@ -30,6 +30,9 @@ pub trait Process: Sync {
     fn getpid(&self, caller: Caller) -> isize {
         unimplemented!()
     }
+    fn set_tid_address(&self, caller: Caller, tidp: usize) -> isize {
+        unimplemented!()
+    }
 }
 
 pub trait IO: Sync {
@@ -68,6 +71,10 @@ pub trait IO: Sync {
 }
 
 pub trait Memory: Sync {
+    fn brk(&self, caller: Caller, addr: usize) -> isize {
+        unimplemented!()
+    }
+    
     fn mmap(
         &self,
         caller: Caller,
@@ -188,10 +195,12 @@ pub fn handle(caller: Caller, id: SyscallId, args: [usize; 6]) -> SyscallResult 
         Id::EXECVE => PROCESS.call(id, |proc| proc.exec(caller, args[0], args[1])),
         Id::WAIT4 => PROCESS.call(id, |proc| proc.wait(caller, args[0] as _, args[1])),
         Id::GETPID => PROCESS.call(id, |proc| proc.getpid(caller)),
+        Id::SET_TID_ADDRESS => PROCESS.call(id, |proc| proc.set_tid_address(caller, args[0])),
         Id::CLOCK_GETTIME => CLOCK.call(id, |clock| {
             clock.clock_gettime(caller, ClockId(args[0]), args[1])
         }),
         Id::SCHED_YIELD => SCHEDULING.call(id, |sched| sched.sched_yield(caller)),
+        Id::BRK => MEMORY.call(id, |memory| memory.brk(caller, args[0])),
         Id::MUNMAP => MEMORY.call(id, |memory| memory.munmap(caller, args[0], args[1])),
         Id::MMAP => MEMORY.call(id, |memory| {
             let [addr, length, prot, flags, fd, offset] = args;

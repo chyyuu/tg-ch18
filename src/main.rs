@@ -123,6 +123,7 @@ extern "C" fn rust_main() -> ! {
     tg_syscall::init_scheduling(&SyscallContext);
     tg_syscall::init_clock(&SyscallContext);
     tg_syscall::init_signal(&SyscallContext);
+    tg_syscall::init_memory(&SyscallContext);
     let initproc = read_all(FS.open("initproc", OpenFlags::RDONLY).unwrap());
     if let Some((process, thread)) = Process::from_elf(ElfFile::new(initproc.as_slice()).unwrap()) {
         PROCESSOR.get_mut().set_proc_manager(ProcManager::new());
@@ -168,14 +169,35 @@ extern "C" fn rust_main() -> ! {
                                 }
                             },
                             Ret::Unsupported(_) => {
-                                log::info!("id = {id:?}");
+                                log::error!("Unsupported syscall: id = {id:?}");
+                                log::error!("  Syscall args: [{:#x}, {:#x}, {:#x}, {:#x}, {:#x}, {:#x}]", 
+                                    args[0], args[1], args[2], args[3], args[4], args[5]);
+                                log::error!("  Process will exit with code -2");
                                 unsafe { (*processor).make_current_exited(-2) };
                             }
                         },
                     }
                 }
                 e => {
-                    log::error!("unsupported trap: {e:?}");
+                    let ctx = &task.context.context;
+                    let current_proc = unsafe { (*processor).get_current_proc() };
+                    let pid = current_proc.map(|p| p.pid.get_usize()).unwrap_or(0);
+                    
+                    log::error!("╔════════════════════════════════════════════════════════════╗");
+                    log::error!("║  Unsupported Trap Exception                                 ║");
+                    log::error!("╚════════════════════════════════════════════════════════════╝");
+                    log::error!("  Trap Type: {e:?}");
+                    log::error!("  Process PID: {}", pid);
+                    log::error!("  Exception PC (sepc): {:#x}", sepc::read());
+                    log::error!("  Exception Value (stval): {:#x}", stval::read());
+                    log::error!("  Register a0: {:#x}", ctx.a(0));
+                    log::error!("  Register a1: {:#x}", ctx.a(1));
+                    log::error!("  Register a7 (syscall id): {:#x}", ctx.a(7));
+                    log::error!("  Register sp: {:#x}", ctx.sp());
+                    log::error!("  Register ra: {:#x}", ctx.ra());
+                    log::error!("  Process will exit with code -3");
+                    log::error!("════════════════════════════════════════════════════════════");
+                    
                     unsafe { (*processor).make_current_exited(-3) };
                 }
             }
@@ -631,6 +653,12 @@ mod impls {
             let current = PROCESSOR.get_mut().get_current_proc().unwrap();
             current.pid.get_usize() as _
         }
+        
+        fn set_tid_address(&self, _caller: Caller, _tidp: usize) -> isize {
+            // 简化实现：只是返回 PID，不实际使用 _tidp
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            current.pid.get_usize() as isize
+        }
     }
 
     impl Scheduling for SyscallContext {
@@ -756,6 +784,87 @@ mod impls {
             } else {
                 -1
             }
+        }
+    }
+
+    impl Memory for SyscallContext {
+        fn brk(&self, _caller: Caller, addr: usize) -> isize {
+            let current = PROCESSOR.get_mut().get_current_proc().unwrap();
+            
+            log::info!("brk called: addr={:#x}, current heap_start={:#x}, heap_end={:#x}", 
+                       addr, current.heap_start, current.heap_end);
+            
+            // 如果 addr == 0，返回当前的堆边界
+            if addr == 0 {
+                log::info!("brk(0) returning heap_end={:#x}", current.heap_end);
+                return current.heap_end as isize;
+            }
+            
+            // 确保请求的地址不低于堆起始地址
+            if addr < current.heap_start {
+                return current.heap_end as isize;  // 失败，返回当前边界
+            }
+            
+            // 确保请求的地址不会与栈冲突（简单检查：不超过某个上限）
+            const MAX_HEAP_ADDR: usize = 0x10000000;  // 256MB 堆上限
+            if addr > MAX_HEAP_ADDR {
+                return current.heap_end as isize;  // 失败，返回当前边界
+            }
+            
+            let old_heap_end = current.heap_end;
+            let new_heap_end = addr;
+            
+            // 如果新地址比旧地址大，需要分配新页
+            if new_heap_end > old_heap_end {
+                const PAGE_SIZE: usize = 1 << Sv39::PAGE_BITS;
+                let old_heap_end_page = (old_heap_end + PAGE_SIZE - 1) / PAGE_SIZE;
+                let new_heap_end_page = (new_heap_end + PAGE_SIZE - 1) / PAGE_SIZE;
+                
+                // 需要映射新页
+                if new_heap_end_page > old_heap_end_page {
+                    let pages_to_map = new_heap_end_page - old_heap_end_page;
+                    let start_vpn = VPN::new(old_heap_end_page);
+                    let end_vpn = VPN::new(new_heap_end_page);
+                    
+                    // 分配物理内存
+                    let layout = Layout::from_size_align(
+                        pages_to_map * PAGE_SIZE,
+                        PAGE_SIZE,
+                    ).unwrap();
+                    let ptr = unsafe { alloc_zeroed(layout) };
+                    
+                    // 映射到地址空间
+                    current.address_space.map_extern(
+                        start_vpn..end_vpn,
+                        PPN::new(ptr as usize >> Sv39::PAGE_BITS),
+                        build_flags("U_WRV"),
+                    );
+                }
+            }
+            // 如果新地址比旧地址小，理论上应该释放页面，但我们简化处理，不实际释放
+            
+            // 更新堆边界
+            current.heap_end = new_heap_end;
+            new_heap_end as isize
+        }
+
+        fn mmap(
+            &self,
+            _caller: Caller,
+            _addr: usize,
+            _length: usize,
+            _prot: i32,
+            _flags: i32,
+            _fd: i32,
+            _offset: usize,
+        ) -> isize {
+            // 暂不实现，返回错误
+            -1
+        }
+
+        fn munmap(&self, _caller: Caller, _addr: usize, _length: usize) -> isize {
+            // 暂不实现，返回错误
+            -1
         }
     }
 
