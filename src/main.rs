@@ -161,7 +161,7 @@ extern "C" fn rust_main() -> ! {
                         },
                         _ => match syscall_ret {
                             Ret::Done(ret) => match id {
-                                Id::EXIT => unsafe { (*processor).make_current_exited(ret) },
+                                Id::EXIT | Id::EXIT_GROUP => unsafe { (*processor).make_current_exited(ret) },
                                 _ => {
                                     let ctx = &mut task.context.context;
                                     *ctx.a_mut(0) = ret as _;
